@@ -5,75 +5,48 @@ import java.util.Collections;
 import java.util.List;
 
 public class PipelineSimulator {
-
-    private static final int NOP = -1;
     private static final int LW = 0x03;
     private static final int SW = 0x23;
     private static final int BEQ = 0x63;
+    private static final int ARITH_OP = 0x33;
+    private static final int ADDI = 0x13;
     private static final int REG_COUNT = 32;
+    private static final int MEM_SIZE = 1024;
 
-    private int cycle = 0;
+    private PipelineRegister IF_ID = new PipelineRegister();
+    private PipelineRegister ID_EX = new PipelineRegister();
+    private PipelineRegister EX_MEM = new PipelineRegister();
+    private PipelineRegister MEM_WB = new PipelineRegister();
+
     private int pc = 0;
+    private int cycle = 0;
+    private boolean stall = false;
+    private boolean branchResolved = false;
 
-    private final List<Integer> regs = new ArrayList<>(Collections.nCopies(REG_COUNT, 1));
-    private final List<Integer> memory = new ArrayList<>(Collections.nCopies(1024, 0));
-
-    private final List<Integer> instructions;
-
-    private final List<Integer> IFID, IDEX, EXMEM, MEMWB;
-
-    private int EXMEM_ALUOut, EXMEM_B;
-    private int MEMWB_ALUOut, MEMWB_LMD;
-    private int IDEX_A, IDEX_B;
+    private final List<Integer> regs = new ArrayList<>(Collections.nCopies(REG_COUNT, 0));
+    private final List<Integer> memory = new ArrayList<>(Collections.nCopies(MEM_SIZE, 0));
+    private final List<Instruction> instructions;
 
     public PipelineSimulator(List<Instruction> instructions) {
-        this.instructions = instructions.stream().map(Instruction::toBinary).toList();
-
-        this.IFID = new ArrayList<>(Collections.nCopies(instructions.size(), NOP));
-        this.IDEX = new ArrayList<>(Collections.nCopies(instructions.size(), NOP));
-        this.EXMEM = new ArrayList<>(Collections.nCopies(instructions.size(), NOP));
-        this.MEMWB = new ArrayList<>(Collections.nCopies(instructions.size(), NOP));
+        this.instructions = new ArrayList<>(instructions);
+        regs.set(0, 0);
     }
 
     public void run() {
-        while (cycle < instructions.size() + 4) {
+        while (cycle < instructions.size() + 4 && cycle < 100) {
+            writeBack();
+            memoryAccess();
+            execute();
 
-            for (int i = 0; i < instructions.size(); i++) {
-                if (MEMWB.get(i) != NOP) {
-                    writeBack(MEMWB.get(i));
-                }
+            if (!stall) {
+                decode();
+            } else {
+                stall = false;
             }
 
-            for (int i = 0; i < instructions.size(); i++) {
-                if (EXMEM.get(i) != NOP) {
-                    memoryAccess(i, EXMEM.get(i));
-                }
-            }
+            instructionFetch();
 
-            for (int i = 0; i < instructions.size(); i++) {
-                if (IDEX.get(i) != NOP) {
-                    execute(i, IDEX.get(i));
-                }
-            }
-
-            for (int i = 0; i < instructions.size(); i++) {
-                if (IFID.get(i) != NOP) {
-                    decode(i, IFID.get(i));
-                }
-            }
-
-            for (int i = instructions.size() - 1; i >= 0; i--) {
-                if (cycle >= i + 4) {
-                    fetch(i);
-                }
-            }
-
-            for (int i = 0; i < instructions.size(); i++) {
-                MEMWB.set(i, EXMEM.get(i));
-                EXMEM.set(i, IDEX.get(i));
-                IDEX.set(i, IFID.get(i));
-                IFID.set(i, instructions.get(i));
-            }
+            updatePipelineRegisters();
 
             cycle++;
 
@@ -81,83 +54,151 @@ public class PipelineSimulator {
         }
     }
 
-    private void fetch(int index) {
-        if (cycle >= index + 4) {
-            IFID.set(index, instructions.get(index));
+    private void instructionFetch() {
+        if (pc >= instructions.size() || branchResolved) return;
+
+        IF_ID.setInstruction(instructions.get(pc));
+        IF_ID.setPc(pc);
+
+        pc++;
+    }
+
+    private void decode() {
+        if (IF_ID.getInstruction() == null) {
+            ID_EX.setInstruction(null);
+
+            return;
+        }
+
+        Instruction instruction = IF_ID.getInstruction();
+        int opcode = instruction.getOpcode();
+
+        ID_EX.setInstruction(instruction);
+        ID_EX.setPc(IF_ID.getPc());
+
+        ID_EX.setRs1(instruction.getRs1());
+        ID_EX.setRs2(instruction.getRs2());
+        ID_EX.setRd(instruction.getRd());
+        ID_EX.setImm(instruction.getImm());
+
+        if (checkDataHazard(ID_EX.getRs1()) || checkDataHazard(ID_EX.getRs2())) {
+            stall = true;
+            ID_EX.setInstruction(null);
+
+            return;
+        }
+
+        ID_EX.setA(getForwardedValue(ID_EX.getRs1()));
+        ID_EX.setB(getForwardedValue(ID_EX.getRs2()));
+
+        switch (opcode) {
+            case LW, ADDI, SW, BEQ -> ID_EX.setImm(instruction.getImm());
         }
     }
 
-    private void decode(int index, int instruction) {
-        IDEX.set(index, instruction);
-
-        int rs1 = (instruction >> 15) & 0x1F;
-        int rs2 = (instruction >> 20) & 0x1F;
-
-        IDEX_A = regs.get(rs1);
-        IDEX_B = regs.get(rs2);
+    private boolean checkDataHazard(int register) {
+        return register != 0 &&
+                ((EX_MEM.getRd() == register && EX_MEM.getInstruction() != null && EX_MEM.getInstruction().getOpcode() == LW) ||
+                        (MEM_WB.getRd() == register && MEM_WB.getInstruction() != null && MEM_WB.getInstruction().getOpcode() == LW));
     }
 
-    private void execute(int index, int instruction) {
-        EXMEM.set(index, instruction);
 
-        int opcode = instruction & 0x7F;
+    private int getForwardedValue(int register) {
+        if (register == 0) {
+            return 0;
+        }
 
-        if (opcode == LW || opcode == SW) {
-            int imm = (instruction >> 20);
-            EXMEM_ALUOut = IDEX_A + imm;
-        } else if (opcode == BEQ) {
-            if (IDEX_A == IDEX_B) {
-                pc = IDEX_A + ((instruction >> 7) & 0x1F);
-            }
-        } else if (opcode == 0x33) {
-            int funct3 = (instruction >> 12) & 0x7;
-            int funct7 = (instruction >> 25) & 0x7F;
+        if (EX_MEM.getRd() == register && EX_MEM.getInstruction() != null) {
+            return EX_MEM.getAluResult();
+        } else if (MEM_WB.getRd() == register && MEM_WB.getInstruction() != null) {
+            return MEM_WB.getInstruction().getOpcode() == LW ? MEM_WB.getLmd() : MEM_WB.getAluResult();
+        }
 
-            if (funct3 == 0x0) {
-                if (funct7 == 0x00) {
-                    EXMEM_ALUOut = IDEX_A + IDEX_B;
-                } else if (funct7 == 0x20) {
-                    EXMEM_ALUOut = IDEX_A - IDEX_B;
+        return regs.get(register);
+    }
+
+    private void execute() {
+        if (ID_EX.getInstruction() == null) {
+            EX_MEM.setInstruction(null);
+            return;
+        }
+
+        Instruction instruction = ID_EX.getInstruction();
+
+        int opcode = instruction.getOpcode();
+
+        EX_MEM.setInstruction(instruction);
+        EX_MEM.setPc(ID_EX.getPc());
+        EX_MEM.setRd(ID_EX.getRd());
+        EX_MEM.setRs2(ID_EX.getRs2());
+
+        EX_MEM.setB(ID_EX.getB());
+
+        switch (opcode) {
+            case LW, SW, ADDI -> EX_MEM.setAluResult(ID_EX.getA() + ID_EX.getImm());
+            case BEQ -> {
+                EX_MEM.setBranchTaken(ID_EX.getA() == ID_EX.getB());
+
+                if (EX_MEM.isBranchTaken()) {
+                    pc = ID_EX.getPc() + ID_EX.getImm();
+                    branchResolved = true;
                 }
-            } else if (funct3 == 0x7) {
-                EXMEM_ALUOut = IDEX_A & IDEX_B;
-            } else if (funct3 == 0x6) {
-                EXMEM_ALUOut = IDEX_A | IDEX_B;
             }
-        } else if (opcode == 0x13) {
-            int imm = (instruction >> 20);
-            EXMEM_ALUOut = IDEX_A + imm;
-        }
+            case ARITH_OP -> {
+                int funct3 = instruction.getFunct3();
 
-        EXMEM_B = IDEX_B;
+                switch (funct3) {
+                    case 0x0 -> EX_MEM.setAluResult(instruction.getFunct7() == 0 ? ID_EX.getA() + ID_EX.getB() : ID_EX.getA() - ID_EX.getB());
+                    case 0x6 -> EX_MEM.setAluResult(ID_EX.getA() | ID_EX.getB());
+                    case 0x7 -> EX_MEM.setAluResult(ID_EX.getA() & ID_EX.getB());
+                }
+            }
+        }
     }
 
-    private void memoryAccess(int index, int instruction) {
-        MEMWB.set(index, instruction);
+    private void memoryAccess() {
+        if (EX_MEM.getInstruction() == null) {
+            MEM_WB.setInstruction(null);
 
-        int opcode = instruction & 0x7F;
+            return;
+        }
+
+        Instruction instruction = EX_MEM.getInstruction();
+        int opcode = instruction.getOpcode();
+
+        MEM_WB.setInstruction(instruction);
+        MEM_WB.setRd(EX_MEM.getRd());
+        MEM_WB.setAluResult(EX_MEM.getAluResult());
+
+        switch (opcode) {
+            case LW -> MEM_WB.setLmd(memory.get(EX_MEM.getAluResult() / 4));
+            case SW -> memory.set(EX_MEM.getAluResult(), EX_MEM.getB());
+        }
+    }
+
+    private void writeBack() {
+        if (MEM_WB.getInstruction() == null) {
+            return;
+        }
+
+        int opcode = MEM_WB.getInstruction().getOpcode();
 
         if (opcode == LW) {
-            MEMWB_LMD = memory.get(EXMEM_ALUOut / 4);
-        } else if (opcode == SW) {
-            memory.set(EXMEM_ALUOut / 4, EXMEM_B);
-        }
-
-        MEMWB_ALUOut = EXMEM_ALUOut;
-    }
-
-    private void writeBack( int instruction) {
-        int opcode = instruction & 0x7F;
-        int rd = (instruction >> 7) & 0x1F;
-
-        if (opcode == LW) {
-            regs.set(rd, MEMWB_LMD);
-        } else {
-            regs.set(rd, MEMWB_ALUOut);
+            regs.set(MEM_WB.getRd(), MEM_WB.getLmd());
+        } else if (opcode != SW && opcode != BEQ) {
+            regs.set(MEM_WB.getRd(), MEM_WB.getAluResult());
         }
     }
 
-    public static void start(List<Instruction> instructions){
+    private void updatePipelineRegisters() {
+        if (branchResolved) {
+            IF_ID = new PipelineRegister();
+            ID_EX = new PipelineRegister();
+            branchResolved = false;
+        }
+    }
+
+    public static void start(List<Instruction> instructions) {
         new PipelineSimulator(instructions).run();
     }
 }

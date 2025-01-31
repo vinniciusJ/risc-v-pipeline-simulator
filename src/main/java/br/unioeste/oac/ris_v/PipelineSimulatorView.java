@@ -6,6 +6,7 @@ public class PipelineSimulatorView {
     private final static int COLUMNS = 32;
 
     public static void printPipelineState(int cycle, int pc, List<Integer> regs, List<Integer> memory){
+        System.out.println("------------------------------------------------------------------------------------------------------------------------------------------\n");
         System.out.println("Ciclo de clock: " + cycle);
 
         System.out.println("PC: " + pc);
@@ -26,6 +27,7 @@ public class PipelineSimulatorView {
         for (int i = 0; i < rows; i++) {
             for (int j = 0; j < COLUMNS; j++) {
                 int index = i * COLUMNS + j;
+
                 if (index < data.size()) {
                     System.out.printf("%-4d", data.get(index));
                 } else {

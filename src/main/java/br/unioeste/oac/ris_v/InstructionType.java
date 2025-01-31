@@ -4,5 +4,6 @@ public enum InstructionType {
     R,
     I,
     S,
-    B
+    B,
+    J
 }
