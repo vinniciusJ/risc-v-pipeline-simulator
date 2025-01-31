@@ -29,6 +29,11 @@ public class PipelineSimulator {
 
     public PipelineSimulator(List<Instruction> instructions) {
         this.instructions = new ArrayList<>(instructions);
+
+        for(int i = 0; i < REG_COUNT; i++) {
+            regs.set(i, i);
+        }
+
         regs.set(0, 0);
     }
 
@@ -120,6 +125,7 @@ public class PipelineSimulator {
     private void execute() {
         if (ID_EX.getInstruction() == null) {
             EX_MEM.setInstruction(null);
+
             return;
         }
 

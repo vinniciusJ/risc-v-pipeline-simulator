@@ -4,20 +4,14 @@ import java.util.List;
 
 public class Main {
     public static void main(String[] args)  {
-//        List<Instruction> instructions = List.of(
-//                Instruction.addi(1, 0, 10),  // x1 = x0 + 10  (Inicializa x1 com 10)
-//                Instruction.addi(2, 0, 20),  // x2 = x0 + 20  (Inicializa x2 com 20)
-//                Instruction.or(3, 1, 2),     // x3 = x1 | x2  (Independente, usa valores definidos)
-//                Instruction.and(4, 1, 2),    // x4 = x1 & x2  (Independente)
-//                Instruction.add(5, 3, 4)    // x5 = x3 + x4  (Independente)
-//        );
-
         List<Instruction> instructions = List.of(
-                Instruction.addi(1, 0, 10), // r1 = 10
-                Instruction.addi(2, 0, 20), // r2 = 20
-                Instruction.sw(1, 0, 1)   // Mem[r1 + 0] = r1 (Mem[10] = 10)
-//                Instruction.lw(3, 1, 4)     // r3 = Mem[r1 + 4] (r3 = 20)
+                Instruction.sw(15, 0, 5),  // Mem[r5 + 0] = r15 (Armazena r15 na memória) (Tipo-S)
+                Instruction.lw(16, 0, 5), // r16 = Mem[r5 + 0] (Carrega o valor salvo de r15) (Tipo-I)
+                Instruction.or(17, 16, 6), // r17 = r16 | r6 (Combina r16 e r6 com OR) (Tipo-R)
+                Instruction.sub(18, 8, 9), // r18 = r8 - r9 (Tipo-R)
+                Instruction.beq(17, 18, 12) // Se r17 == r18, salta para offset 12 (Tipo-B)
         );
+
 
         PipelineSimulator.start(instructions);
     }

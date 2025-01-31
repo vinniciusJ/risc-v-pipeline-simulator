@@ -6,7 +6,7 @@ public class PipelineSimulatorView {
     private final static int COLUMNS = 32;
 
     public static void printPipelineState(int cycle, int pc, List<Integer> regs, List<Integer> memory){
-        System.out.println("------------------------------------------------------------------------------------------------------------------------------------------\n");
+        System.out.println("------------------------------------------------------------------------------------------------------------------------------\n");
         System.out.println("Ciclo de clock: " + cycle);
 
         System.out.println("PC: " + pc);
